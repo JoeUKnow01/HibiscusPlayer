@@ -65,7 +65,7 @@ async def play(ctx: commands.Context, *, search: str):  # playable searches all 
 	
 		# Search for the track
 	try:
-		tracks: list[wavelink.player] = await wavelink.player.search(search)
+		tracks: list[wavelink.player] = await wavelink.Playable.search(search)
 		if not tracks:
 			return await ctx.send("No tracks found.")
 
