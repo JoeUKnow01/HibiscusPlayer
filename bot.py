@@ -32,36 +32,33 @@ async def on_wavelink_node_ready(payload: wavelink.NodeReadyEventPayload):
     logging.info(f"Node {payload.node} is ready!")
 
 
-#@bot.event
-#async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
-#await ctx.send(f"Now playing: **{track.title}** by **{track.author}** from "
-#               f"**{track.source}**")
+@bot.event
+async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
+    await payload.player.text_channel.send(f"Now playing: **{payload.track.title}** by "
+                                           f"**{payload.track.author}** from "
+                                           f""f"**{payload.track.source}"f"**")
+
 
 @bot.event
-async def on_wavelink_track_end(player: wavelink.Player, track: wavelink.tracks, reason):
-    if not player.queue.is_empty:
-        next_track = player.queue.get()
-        await player.play(next_track)
-        await player.channel.send(f"Now playing: **{next_track.title}** by **{next_track.author}**")
+async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
+    if not payload.player.queue.is_empty:
+        next_track = payload.player.queue.get()
+        await payload.player.play(next_track)
     else:
-        await player.channel.send("Queue is empty. Add more songs to keep the music playing!")
+        await payload.player.text_channel.send(
+            "Queue is empty. Add more songs to keep the music playing!")
+
+# ---------------------------------------------------------------------------------------
 
 
 async def node_connect():
     await bot.wait_until_ready()
-    node: wavelink.Node = wavelink.Node(client=bot,  # figure out why connection failure
-                                        identifier="Public Lavalink v4",
-                                        uri="wss://lava-v4.ajieblogs.eu.org:443",
-                                        # wss means secure
-                                        password="https://dsc.gg/ajidevserver")
+    node: wavelink.Node = wavelink.Node(client=bot,
+                                        identifier=os.getenv('NODE_ID'),
+                                        uri=os.getenv('NODE_URI'),
+                                        password=os.getenv('NODE_PASSWORD'))
     # Lavalink node from https://lavalink.appujet.site/ssl
-    # {
-    #  "identifier": "Public Lavalink v4",
-    #  "password": "https://dsc.gg/ajidevserver",
-    #  "host": "lava-v4.ajieblogs.eu.org",
-    #  "port": 443,
-    #  "secure": true
-    # }
+
     await wavelink.Pool.connect(client=bot, nodes=[node])
 
 
@@ -69,6 +66,8 @@ async def node_connect():
 async def test(ctx):
     response = "the test is working."
     await ctx.send(response)
+
+# -----------------------------------------------------------------------------------------
 
 
 @bot.command(name="play", help="requests a song to play")
@@ -81,6 +80,7 @@ async def play(ctx: commands.Context, *, search: str):  # playable searches all 
     else:
         vc: wavelink.Player = ctx.voice_client  # use existing voice client
 
+    vc.text_channel = ctx.channel
     #  vc.autoplay = wavelink.AutoPlayMode.enabled  # enables autoplay, make function later
 
     try:  # search for the track
@@ -88,12 +88,11 @@ async def play(ctx: commands.Context, *, search: str):  # playable searches all 
         if not tracks:
             return await ctx.send("No tracks found.")
 
-        # Play the first track from the search results
+        # Play the first track from the search results, change for playlists
         track = tracks[0]
         if not vc.playing:
             await vc.play(track)
-            await ctx.send(f"Now playing: **{track.title}** by **{track.author}** from "
-                           f"**{track.source}**")
+
         else:
             vc.queue.put(track)
             await ctx.send(f"Added to queue: **{track.title}** by **{track.author}** from "
@@ -162,9 +161,39 @@ async def skip(ctx: commands.Context):
 
     if not vc:
         return await ctx.send("The bot is not connected to a voice channel.")
+    elif vc.queue.is_empty:
+        await ctx.send("Skipped the current song.")
+        await vc.stop()
+
     else:
-        await on_wavelink_track_end(player=vc, track=vc.playing, reason="Skipping song")
+
+        await on_wavelink_track_end(wavelink.TrackEndEventPayload(player=vc, track=vc.current,
+                                                                  reason="skipped"))
         await ctx.send("Skipped the current song.")
 
 
+@bot.command(name="stop", help="Stops the current song and clears the queue")
+async def stop(ctx: commands.Context):
+    vc: wavelink.Player = ctx.voice_client
+    if not vc:
+        return await ctx.send("The bot is not connected to a voice channel.")
+
+    else:
+        vc.queue.clear()
+        await vc.stop()
+        await ctx.send("Stopped the song and cleared the queue.")
+        await vc.disconnect()
+
+
+@bot.command(name="clear", help="Clears the queue")
+async def clear(ctx: commands.Context):
+    vc: wavelink.Player = ctx.voice_client
+    if not vc:
+        return await ctx.send("The bot is not connected to a voice channel.")
+    elif vc.queue.is_empty:
+        await ctx.send("The queue is already empty.")
+    else:
+        vc.queue.clear()
+        await ctx.send("Cleared the queue.")
+# ------------------------------------------------------------------
 bot.run(TOKEN)
