@@ -166,9 +166,7 @@ async def skip(ctx: commands.Context):
         await vc.stop()
 
     else:
-
-        await on_wavelink_track_end(wavelink.TrackEndEventPayload(player=vc, track=vc.current,
-                                                                  reason="skipped"))
+        await vc.stop()
         await ctx.send("Skipped the current song.")
 
 
@@ -195,5 +193,18 @@ async def clear(ctx: commands.Context):
     else:
         vc.queue.clear()
         await ctx.send("Cleared the queue.")
+
+
+@bot.command(name="shuffle", help="Shuffles the queue")
+async def shuffle(ctx: commands.Context):
+    vc: wavelink.Player = ctx.voice_client
+    if not vc:
+        return await ctx.send("The bot is not connected to a voice channel.")
+    elif vc.queue.is_empty:
+        await ctx.send("The queue is empty!")
+    else:
+        vc.queue.shuffle()
+        await ctx.send("Shuffled the queue.")
+        await queue(ctx)
 # ------------------------------------------------------------------
 bot.run(TOKEN)
