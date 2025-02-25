@@ -1,9 +1,11 @@
 # bot.py
 import os
+import math
 import logging
 import discord
 from dotenv import load_dotenv
 from discord.ext import commands
+from pagination import PaginationView
 
 import wavelink
 
@@ -20,6 +22,7 @@ client = discord.Client(intents=intents)
 bot = commands.Bot(command_prefix='h!', intents=intents)
 logging.basicConfig(level=logging.INFO)
 
+
 # ---------------------------------------------------------------------------------------
 
 
@@ -27,6 +30,7 @@ logging.basicConfig(level=logging.INFO)
 async def embed_sender(text_channel: discord.TextChannel, message: str):
     embedVar = discord.Embed(description=message, color=0xE91E63)
     await text_channel.send(embed=embedVar)
+
 
 # ---------------------------------------------------------------------------------------
 
@@ -46,7 +50,7 @@ async def on_wavelink_node_ready(payload: wavelink.NodeReadyEventPayload):
 async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
     embedVar = discord.Embed(color=0xE91E63)
     embedVar.add_field(name="Now Playing:", value=f"[**{payload.track.title}** by **{payload.track.author}**]"
-                                                 f"({payload.track.uri})")
+                                                  f"({payload.track.uri})")
     embedVar.set_footer(text=f"Requested by {payload.original.requested}", icon_url=payload.original.requestedURL)
 
     await payload.player.text_channel.send(embed=embedVar)
@@ -58,18 +62,19 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
         next_track = payload.player.queue.get()
         await payload.player.play(next_track)
     else:
-        embedVar = discord.Embed(description="Queue is empty. Add more songs to keep the music playing!",
-                                 color=0xE91E63)
-        await payload.player.text_channel.send(embed=embedVar)
+        await embed_sender(text_channel=payload.player.text_channel,
+                           message="Queue is empty. Add more songs to keep the music playing!")
 
 
 @bot.event
 async def on_wavelink_inactive_player(player: wavelink.Player):
     # no current plans to do anything other than even minutes for timeout, so casting this to an int is fine for now
-    timeout_minutes = int(player.inactive_timeout/60)
+    timeout_minutes = int(player.inactive_timeout / 60)
     await embed_sender(text_channel=player.text_channel, message=f"The player has been inactive for {timeout_minutes} "
                                                                  f"minutes. Goodbye!")
     await player.disconnect()
+
+
 # ---------------------------------------------------------------------------------------
 
 
@@ -93,6 +98,17 @@ async def test(ctx: commands.Context):
     await ctx.send(embed=embedVar)
 
 
+@bot.command(name="testpage", help="testing embedded messages w/ pagination")
+async def testpage(ctx: commands.Context):
+    embeds = [
+        discord.Embed(title="Page 1", description="This is the first page."),
+        discord.Embed(title="Page 2", description="This is the second page."),
+        discord.Embed(title="Page 3", description="This is the third page."),
+    ]
+
+    # Send the first embed with the pagination view
+    view = PaginationView(embeds)
+    await ctx.send(embed=embeds[0], view=view)
 # -----------------------------------------------------------------------------------------
 
 
@@ -184,15 +200,29 @@ async def queue(ctx: commands.Context):
     elif vc.queue.is_empty:
         await embed_sender(text_channel=ctx.channel, message="The queue is empty.")
     else:
-        embedVar = discord.Embed(title="Upcoming Queue:", color=0xE91E63)
-        queue_description = ""
+        # Calculate the number of pages needed
+        queue_len = len(vc.queue)
+        songs_per_page = 10
+        pages_needed = math.ceil(queue_len / songs_per_page)
 
-        for i, track in enumerate(vc.queue, start=1):
-            # Use one queue description instead of creating new fields to avoid space needed for empty name
-            queue_description += f"**{i}**) [**{track.title}** by **{track.author}**]({track.uri})\n"
+        embed_pages = []
+        for page in range(pages_needed):
+            queue_embed = discord.Embed(title="Upcoming Queue:", color=0xE91E63)
+            queue_embed.set_footer(text=f"Page {page + 1}/{pages_needed}")
 
-        embedVar.add_field(name='\u200b', value=queue_description, inline=False)
-        await ctx.send(embed=embedVar)
+            # Add songs for the current page
+            start_index = page * songs_per_page
+            end_index = start_index + songs_per_page
+
+            for i, track in enumerate(vc.queue[start_index:end_index], start=start_index + 1):
+                queue_embed.add_field(name='\u200b',
+                                      value=f"**{i}**) [**{track.title}** by **{track.author}**]({track.uri})\n",
+                                      inline=False
+                                      )
+
+            embed_pages.append(queue_embed)
+        view = PaginationView(embed_pages)
+        await ctx.send(embed=embed_pages[0], view=view)
 
 
 @bot.command(name="skip", help="Skips the song that is currently playing")
@@ -249,5 +279,7 @@ async def shuffle(ctx: commands.Context):
         vc.queue.shuffle()
         await embed_sender(text_channel=ctx.channel, message="Shuffled the queue")
         await queue(ctx)  # call queue to print the newly shuffled queue
+
+
 # ------------------------------------------------------------------
 bot.run(TOKEN)
