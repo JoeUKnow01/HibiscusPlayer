@@ -2,6 +2,7 @@
 import os
 import math
 import logging
+
 import discord
 from dotenv import load_dotenv
 from discord.ext import commands
@@ -23,7 +24,7 @@ bot = commands.Bot(command_prefix='h!', intents=intents)
 logging.basicConfig(level=logging.INFO)
 
 
-# ---------------------------------------------------------------------------------------
+########################################################################################################################
 
 
 # sends basic one-line embeds so other functions are cleaner
@@ -32,7 +33,7 @@ async def embed_sender(text_channel: discord.TextChannel, message: str):
     await text_channel.send(embed=embedVar)
 
 
-# ---------------------------------------------------------------------------------------
+########################################################################################################################
 
 
 @bot.event
@@ -75,7 +76,7 @@ async def on_wavelink_inactive_player(player: wavelink.Player):
     await player.disconnect()
 
 
-# ---------------------------------------------------------------------------------------
+########################################################################################################################
 
 
 async def node_connect():
@@ -109,11 +110,12 @@ async def testpage(ctx: commands.Context):
     # Send the first embed with the pagination view
     view = PaginationView(embeds)
     await ctx.send(embed=embeds[0], view=view)
-# -----------------------------------------------------------------------------------------
+########################################################################################################################
+# Play commands with track options (i.e. skip, pause)
 
 
-@bot.command(name="play", help="requests a song to play")
-async def play(ctx: commands.Context, *, search: str):  # playable searches all sources
+@bot.command(name="play", aliases=['p'], help="requests a song to play")
+async def play(ctx: commands.Context, *, search: str, queue_next=False):  # playable searches all sources
     if not ctx.author.voice:  # ensure user is connected to voice channel
         return await embed_sender(text_channel=ctx.channel,
                                   message=f"You must be connected to a voice channel to play music!")
@@ -127,30 +129,65 @@ async def play(ctx: commands.Context, *, search: str):  # playable searches all 
 
     #  vc.autoplay = wavelink.AutoPlayMode.enabled  # enables autoplay, make function later
 
-    try:  # search for the track
+    try:  # search for the track, default is YouTube but can be changed
         tracks: list[wavelink.Playable] = await wavelink.Playable.search(search)
         if not tracks:
             return await embed_sender(text_channel=ctx.channel, message=f"No tracks found for '{search}'")
 
-        # Play the first track from the search results, change for playlists
-        track = tracks[0]
-        track.requested = ctx.author  # the user who requested the song
-        track.requestedURL = ctx.author.avatar.url
-        if not vc.playing:
-            await vc.play(track)
+        # Play single tracks
+        if type(tracks) is not wavelink.tracks.Playlist:
+            track = tracks[0]
+            logging.info("Found single track")
 
+            track.requested = ctx.author  # the user who requested the song
+            track.requestedURL = ctx.author.avatar.url  # the avatar of the user, for flavoring the footer
+            if not vc.playing:
+                await vc.play(track)
+
+            else:
+                if queue_next:
+                    vc.queue.put_at(0, track)
+                    queue_embed = discord.Embed(title="Playing next:", color=0xE91E63)
+                else:
+                    vc.queue.put(track)
+                    queue_embed = discord.Embed(title="Added to Queue:", color=0xE91E63)
+                queue_embed.add_field(name="Track", value=f"[{track.title} by {track.author}]({track.uri})", inline=False)
+                # add info about queue position
+                queue_embed.set_footer(text=f"Requested by {ctx.author}", icon_url=ctx.author.avatar.url)
+                await ctx.send(embed=queue_embed)
+        # Play playlists
         else:
-            vc.queue.put(track)
+            playlist = tracks
+            logging.info("Found a playlist")
 
-            queue_embed = discord.Embed(title="Added to Queue:", color=0xE91E63)
-            queue_embed.add_field(name="Track", value=f"[{track.title} by {track.author}]({track.uri})", inline=False)
-            # add info about queue position
-            queue_embed.set_footer(text=f"Requested by {ctx.author}", icon_url=ctx.author.avatar.url)
-            await ctx.send(embed=queue_embed)
+            # set the necessary data for the track start embed
+            for track in playlist:
+                track.requested = ctx.author
+                track.requestedURL = ctx.author.avatar.url
+
+            # add the songs to the queue
+            if queue_next:
+                await embed_sender(text_channel=ctx.channel, message="You can't play an entire playlist next! Added to "
+                                                                     "end of queue.")
+            vc.queue.put(playlist)
+            playlist_embed = discord.Embed(title="Added playlist to Queue:", color=0xE91E63)
+
+            playlist_embed.add_field(name=f"{playlist.name}", value=f"{len(playlist.tracks)} songs", inline=False)
+            playlist_embed.set_footer(text=f"Requested by {ctx.author}", icon_url=ctx.author.avatar.url)
+            await ctx.send(embed=playlist_embed)
+
+            # if nothing is playing, begin to play the queue
+            if not vc.playing:
+                await vc.play(vc.queue[0])
 
     except Exception as e:
         logging.error(f"Error playing track: {e}")
         await embed_sender(text_channel=ctx.channel, message="An error occured while trying to play the track")
+
+
+@bot.command(name="playnext", aliases=['pn'], help="Puts a song at the top of the queue")
+async def playnext(ctx: commands.Context, search: str):
+    await play(ctx, search=search, queue_next=True)
 
 
 @bot.command(name="pause", help="Pauses the current song")
@@ -190,7 +227,38 @@ async def resume(ctx: commands.Context):
         await embed_sender(text_channel=ctx.channel, message="The song is not currently paused.")
 
 
-@bot.command(name="queue", help="Returns the current music queue")
+@bot.command(name="skip", help="Skips the song that is currently playing")
+async def skip(ctx: commands.Context):
+    # Get the player from the guild
+    vc: wavelink.Player = ctx.voice_client
+
+    if not vc:
+        return await embed_sender(text_channel=ctx.channel, message="The bot is not connected to a voice channel.")
+
+    else:
+        await embed_sender(text_channel=ctx.channel, message="Skipped the current song.")
+        await vc.stop()  # stop after sending the skip message so the empty queue message comes last
+
+
+@bot.command(name="stop", help="Stops the current song and clears the queue")
+async def stop(ctx: commands.Context):
+    vc: wavelink.Player = ctx.voice_client
+    if not vc:
+        return await embed_sender(text_channel=ctx.channel, message="The bot is not connected to a voice channel.")
+
+    else:
+        # these two lines are necessary before disconnected to ensure no errors
+        vc.queue.clear()
+        await vc.stop()
+
+        await embed_sender(text_channel=ctx.channel, message="Stopped the current song and cleared the queue")
+        await vc.disconnect()
+
+########################################################################################################################
+# Queue commands
+
+
+@bot.command(name="queue", aliases=['q'], help="Returns the current music queue")
 async def queue(ctx: commands.Context):
     # Get the player from the guild
     vc: wavelink.Player = ctx.voice_client
@@ -225,34 +293,6 @@ async def queue(ctx: commands.Context):
         await ctx.send(embed=embed_pages[0], view=view)
 
 
-@bot.command(name="skip", help="Skips the song that is currently playing")
-async def skip(ctx: commands.Context):
-    # Get the player from the guild
-    vc: wavelink.Player = ctx.voice_client
-
-    if not vc:
-        return await embed_sender(text_channel=ctx.channel, message="The bot is not connected to a voice channel.")
-
-    else:
-        await embed_sender(text_channel=ctx.channel, message="Skipped the current song.")
-        await vc.stop()  # stop after sending the skip message so the empty queue message comes last
-
-
-@bot.command(name="stop", help="Stops the current song and clears the queue")
-async def stop(ctx: commands.Context):
-    vc: wavelink.Player = ctx.voice_client
-    if not vc:
-        return await embed_sender(text_channel=ctx.channel, message="The bot is not connected to a voice channel.")
-
-    else:
-        # these two lines are necessary before disconnected to ensure no errors
-        vc.queue.clear()
-        await vc.stop()
-
-        await embed_sender(text_channel=ctx.channel, message="Stopped the current song and cleared the queue")
-        await vc.disconnect()
-
-
 @bot.command(name="clear", help="Clears the queue")
 async def clear(ctx: commands.Context):
     vc: wavelink.Player = ctx.voice_client
@@ -281,5 +321,38 @@ async def shuffle(ctx: commands.Context):
         await queue(ctx)  # call queue to print the newly shuffled queue
 
 
-# ------------------------------------------------------------------
+@bot.command(name="move", help="Move the position of a track in queue")
+async def move(ctx: commands.Context, from_pos: int, to_pos: int):
+    vc: wavelink.Player = ctx.voice_client
+    if not vc:
+        return await embed_sender(text_channel=ctx.channel, message="The bot is not connected to a voice channel.")
+
+    elif vc.queue.is_empty:
+        await embed_sender(text_channel=ctx.channel, message="The queue is empty!")
+
+    elif from_pos > len(vc.queue):
+        await embed_sender(text_channel=ctx.channel, message="Invalid 'from' position!")
+
+    elif to_pos > len(vc.queue):
+        await embed_sender(text_channel=ctx.channel, message="Invalid 'to' position!")
+
+    else:
+        moving_track = vc.queue.get_at(from_pos - 1)  # queue positions start at 1 externally but 0 internally
+        vc.queue.put_at(to_pos - 1, moving_track)
+        await embed_sender(text_channel=ctx.channel, message=f"Moved {moving_track} from {from_pos} -> {to_pos} "
+                                                             f"in queue.")
+
+
+@bot.command(name="remove", help="Remove a track from queue")
+async def remove(ctx: commands.Context, track_position: int):
+    vc: wavelink.Player = ctx.voice_client
+    if not vc:
+        return await embed_sender(text_channel=ctx.channel, message="The bot is not connected to a voice channel.")
+    elif vc.queue.is_empty:
+        await embed_sender(text_channel=ctx.channel, message="The queue is empty!")
+    else:
+        to_remove_track = vc.queue.get_at(track_position - 1)
+        vc.queue.delete(track_position-1)
+        await embed_sender(text_channel=ctx.channel, message=f"Removed {to_remove_track} from queue.")
+########################################################################################################################
 bot.run(TOKEN)
