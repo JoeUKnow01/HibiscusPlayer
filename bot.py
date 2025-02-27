@@ -351,8 +351,7 @@ async def remove(ctx: commands.Context, track_position: int):
     elif vc.queue.is_empty:
         await embed_sender(text_channel=ctx.channel, message="The queue is empty!")
     else:
-        to_remove_track = vc.queue.get_at(track_position - 1)
-        vc.queue.delete(track_position-1)
+        to_remove_track = vc.queue.get_at(track_position - 1)  # pops it out of queue so no need to delete
         await embed_sender(text_channel=ctx.channel, message=f"Removed {to_remove_track} from queue.")
 ########################################################################################################################
 bot.run(TOKEN)
