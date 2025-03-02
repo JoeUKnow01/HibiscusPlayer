@@ -86,7 +86,7 @@ async def node_connect():
                                         uri=os.getenv('NODE_URI'),
                                         password=os.getenv('NODE_PASSWORD'))
     # Lavalink node from https://lavalink.appujet.site/ssl
-    node._inactive_player_timeout = 300  # set the timeout limit in seconds
+    node._inactive_player_timeout = 180  # set the timeout limit in seconds
     await wavelink.Pool.connect(client=bot, nodes=[node])
 
 
@@ -121,7 +121,11 @@ async def play(ctx: commands.Context, *, search: str, queue_next=False):  # play
                                   message=f"You must be connected to a voice channel to play music!")
 
     if not ctx.voice_client:  # join the voice channel if the bot is not already in one
-        vc: wavelink.Player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+        try:
+            vc: wavelink.Player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+        except Exception as e:
+            logging.error(f"Error Joining the voice channel: {e}")
+            await embed_sender(text_channel=ctx.channel, message="An error occurred while trying to join the channel.")
     else:
         vc: wavelink.Player = ctx.voice_client  # use existing voice client
 
