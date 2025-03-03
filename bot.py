@@ -1,4 +1,5 @@
 # bot.py
+import asyncio
 import os
 import math
 import logging
@@ -122,10 +123,15 @@ async def play(ctx: commands.Context, *, search: str, queue_next=False):  # play
 
     if not ctx.voice_client:  # join the voice channel if the bot is not already in one
         try:
+            logging.info(msg="Trying to connect to vc...")
             vc: wavelink.Player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+        except asyncio.CancelledError as e:
+            logging.error(f"CancelledError when trying to connect to voice channel: {e}")
+            raise
         except Exception as e:
             logging.error(f"Error Joining the voice channel: {e}")
-            await embed_sender(text_channel=ctx.channel, message="An error occurred while trying to join the channel.")
+            return await embed_sender(text_channel=ctx.channel,
+                                      message="An error occurred while trying to join the channel.")
     else:
         vc: wavelink.Player = ctx.voice_client  # use existing voice client
 
@@ -146,7 +152,7 @@ async def play(ctx: commands.Context, *, search: str, queue_next=False):  # play
             track.requested = ctx.author  # the user who requested the song
             track.requestedURL = ctx.author.avatar.url  # the avatar of the user, for flavoring the footer
             if not vc.playing:
-                await vc.play(track)
+                return await vc.play(track)
 
             else:
                 if queue_next:
@@ -158,7 +164,8 @@ async def play(ctx: commands.Context, *, search: str, queue_next=False):  # play
                 queue_embed.add_field(name="Track", value=f"[{track.title} by {track.author}]({track.uri})", inline=False)
                 # add info about queue position
                 queue_embed.set_footer(text=f"Requested by {ctx.author}", icon_url=ctx.author.avatar.url)
-                await ctx.send(embed=queue_embed)
+                return await ctx.send(embed=queue_embed)
+
         # Play playlists
         else:
             playlist = tracks
@@ -182,7 +189,8 @@ async def play(ctx: commands.Context, *, search: str, queue_next=False):  # play
 
             # if nothing is playing, begin to play the queue
             if not vc.playing:
-                await vc.play(vc.queue[0])
+                return await vc.play(vc.queue[0])
+            return
 
     except Exception as e:
         logging.error(f"Error playing track: {e}")
