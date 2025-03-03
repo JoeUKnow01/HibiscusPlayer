@@ -27,7 +27,29 @@ logging.basicConfig(level=logging.INFO)
 async def on_disconnect():
     logging.warning("Bot has disconnected from Discord. Attempting to reconnect...")
     await asyncio.sleep(5)  # Wait for 5 seconds before attempting to reconnect
-    await bot.connect(reconnect=True)
+
+    # Clean up Lavalink nodes
+    if hasattr(bot, 'wavelink_nodes'):
+        logging.info(msg="Cleaning up wavelink nodes...")
+        for node in bot.wavelink_nodes.values():
+            await node.disconnect()
+        logging.info(msg="Wavelink nodes cleaned up successfully.")
+    # Check if the event loop is closed and create a new one if necessary
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError as e:
+        if "no running event loop" in str(e):
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        else:
+            raise
+
+    # Attempt to reconnect.
+    try:
+        await bot.connect(reconnect=True)
+        logging.info(msg="Reconnected to Discord.")
+    except Exception as e:
+        logging.error(f"Failed to reconnect: {e}")
 
 ########################################################################################################################
 
@@ -65,12 +87,17 @@ async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
 
 @bot.event
 async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
-    if not payload.player.queue.is_empty:
+    try:
+        bot_queue = payload.player.queue
+        bot_text = payload.player.text_channel
+    except AttributeError:
+        logging.warning(msg="Queue doesn't exist in on_wavelink_track_end. This is likely due to forced disconnect.")
+        return
+    if not bot_queue.is_empty:
         next_track = payload.player.queue.get()
         await payload.player.play(next_track)
     else:
-        await embed_sender(text_channel=payload.player.text_channel,
-                           message="Queue is empty. Add more songs to keep the music playing!")
+        await embed_sender(text_channel=bot_text, message="Queue is empty. Add more songs to keep the music playing!")
 
 
 @bot.event
@@ -79,10 +106,22 @@ async def on_wavelink_inactive_player(player: wavelink.Player):
     timeout_minutes = int(player.inactive_timeout / 60)
     await embed_sender(text_channel=player.text_channel, message=f"The player has been inactive for {timeout_minutes} "
                                                                  f"minutes. Goodbye!")
-    await player.disconnect()
+    await player.disconnect(force=True)  # Ensure cleanup with a forced disconnect
     logging.info(f"The bot has disconnected from {player.channel} in {player.guild} due to inactivity.")
     await asyncio.sleep(0)  # Yield control to the event loop (attempt to fix bug)
 
+
+# This function is called whenever there is an update to the voice channel.
+@bot.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    # Check if the bot was forcefully disconnected here later. Figure out how to make that work.
+    if member.id == bot.user.id and before.channel and not after.channel:
+        logging.info("Bot has disconnected from a voice channel.")
+        # Clean up the player state
+        if hasattr(bot, 'voice_clients'):
+            for vc in bot.voice_clients:
+                await vc.disconnect(force=True)
+                logging.info(f"Cleaned up voice client in guild {member.guild.name}.")
 
 ########################################################################################################################
 
@@ -271,7 +310,7 @@ async def stop(ctx: commands.Context):
         await vc.stop()
 
         await embed_sender(text_channel=ctx.channel, message="Stopped the current song and cleared the queue")
-        await vc.disconnect()
+        await vc.disconnect(force=True)  # Ensure cleanup with a forced disconnect
 
 ########################################################################################################################
 # Queue commands
