@@ -18,12 +18,16 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD = os.getenv('DISCORD_SERVER')  # Discord Servers are actually called Guilds
 
-client = discord.Client(intents=intents)
-
 # h! is bot command prefix for any bot actions
-bot = commands.Bot(command_prefix='h!', intents=intents)
+bot = commands.Bot(command_prefix='h!', intents=intents, reconnect=True)
 logging.basicConfig(level=logging.INFO)
 
+
+@bot.event
+async def on_disconnect():
+    logging.warning("Bot has disconnected from Discord. Attempting to reconnect...")
+    await asyncio.sleep(5)  # Wait for 5 seconds before attempting to reconnect
+    await bot.connect(reconnect=True)
 
 ########################################################################################################################
 
@@ -40,12 +44,13 @@ async def embed_sender(text_channel: discord.TextChannel, message: str):
 @bot.event
 async def on_ready():
     logging.info("HibiscusBot is online!")
+    logging.info(f"Gateway latency is {bot.latency * 1000:.2f}ms")
     bot.loop.create_task(node_connect())
 
 
 @bot.event
 async def on_wavelink_node_ready(payload: wavelink.NodeReadyEventPayload):
-    logging.info(f"Node {payload.node} is ready!")
+    logging.info(f"{payload.node} is ready!")
 
 
 @bot.event
@@ -75,6 +80,8 @@ async def on_wavelink_inactive_player(player: wavelink.Player):
     await embed_sender(text_channel=player.text_channel, message=f"The player has been inactive for {timeout_minutes} "
                                                                  f"minutes. Goodbye!")
     await player.disconnect()
+    logging.info(f"The bot has disconnected from {player.channel} in {player.guild} due to inactivity.")
+    await asyncio.sleep(0)  # Yield control to the event loop (attempt to fix bug)
 
 
 ########################################################################################################################
@@ -123,7 +130,7 @@ async def play(ctx: commands.Context, *, search: str, queue_next=False):  # play
 
     if not ctx.voice_client:  # join the voice channel if the bot is not already in one
         try:
-            logging.info(msg="Trying to connect to vc...")
+            logging.info(msg=f"Trying to connect to {ctx.author.voice.channel} in {ctx.guild}...")
             vc: wavelink.Player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
         except asyncio.CancelledError as e:
             logging.error(f"CancelledError when trying to connect to voice channel: {e}")
@@ -147,7 +154,7 @@ async def play(ctx: commands.Context, *, search: str, queue_next=False):  # play
         # Play single tracks
         if type(tracks) is not wavelink.tracks.Playlist:
             track = tracks[0]
-            logging.info("Found single track")
+            logging.info(f"Found single track for {ctx.author} in {ctx.guild}")
 
             track.requested = ctx.author  # the user who requested the song
             track.requestedURL = ctx.author.avatar.url  # the avatar of the user, for flavoring the footer
@@ -169,7 +176,7 @@ async def play(ctx: commands.Context, *, search: str, queue_next=False):  # play
         # Play playlists
         else:
             playlist = tracks
-            logging.info("Found a playlist")
+            logging.info(f"Found a playlist for {ctx.author} in {ctx.guild}")
 
             # set the necessary data for the track start embed
             for track in playlist:
