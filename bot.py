@@ -22,23 +22,6 @@ GUILD = os.getenv('DISCORD_SERVER')  # Discord Servers are actually called Guild
 bot = commands.Bot(command_prefix='h!', intents=intents, reconnect=True)
 logging.basicConfig(level=logging.INFO)
 
-
-@bot.event
-async def on_disconnect():
-    logging.warning("Bot has disconnected from Discord. Attempting to reconnect...")
-    await asyncio.sleep(5)  # Wait for 5 seconds before attempting to reconnect
-
-    # Clean up existing WebSocket connections
-    if bot.ws:
-        await bot.ws.close(code=1000)  # Close the WebSocket connection gracefully
-
-    # Attempt to reconnect.
-    try:
-        await bot.connect(reconnect=True)
-        logging.info(msg="Reconnected to Discord.")
-    except Exception as e:
-        logging.error(f"Failed to reconnect: {e}")
-
 ########################################################################################################################
 
 
