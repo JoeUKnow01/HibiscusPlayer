@@ -28,21 +28,9 @@ async def on_disconnect():
     logging.warning("Bot has disconnected from Discord. Attempting to reconnect...")
     await asyncio.sleep(5)  # Wait for 5 seconds before attempting to reconnect
 
-    # Clean up Lavalink nodes
-    if hasattr(bot, 'wavelink_nodes'):
-        logging.info(msg="Cleaning up wavelink nodes...")
-        for node in bot.wavelink_nodes.values():
-            await node.disconnect()
-        logging.info(msg="Wavelink nodes cleaned up successfully.")
-    # Check if the event loop is closed and create a new one if necessary
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError as e:
-        if "no running event loop" in str(e):
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        else:
-            raise
+    # Clean up existing WebSocket connections
+    if bot.ws:
+        await bot.ws.close(code=1000)  # Close the WebSocket connection gracefully
 
     # Attempt to reconnect.
     try:
@@ -116,13 +104,13 @@ async def on_wavelink_inactive_player(player: wavelink.Player):
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
     # Check if the bot was forcefully disconnected here later. Figure out how to make that work.
     if member.id == bot.user.id and before.channel and not after.channel:
-        logging.info("Bot has disconnected from a voice channel.")
-        # Clean up the player state
-        if hasattr(bot, 'voice_clients'):
-            for vc in bot.voice_clients:
-                await vc.disconnect(force=True)
-                logging.info(f"Cleaned up voice client in guild {member.guild.name}.")
+        logging.info(f"Bot was disconnected from a voice channel in guild {member.guild.name}.")
 
+        # Clean up the voice client for the specific guild
+        vc: wavelink.Player = member.guild.voice_client
+        if vc:
+            await vc.disconnect(force=True)
+            logging.info(f"Cleaned up voice client in guild {member.guild.name}.")
 ########################################################################################################################
 
 
