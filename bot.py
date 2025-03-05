@@ -20,7 +20,8 @@ GUILD = os.getenv('DISCORD_SERVER')  # Discord Servers are actually called Guild
 
 # h! is bot command prefix for any bot actions
 bot = commands.Bot(command_prefix='h!', intents=intents, reconnect=True)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG,    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='[%Y-%m-%d] %H:%M:%S')
 
 ########################################################################################################################
 
@@ -48,7 +49,7 @@ async def on_wavelink_node_ready(payload: wavelink.NodeReadyEventPayload):
 
 @bot.event
 async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
-    embedVar = discord.Embed(color=0xE91E63)
+    embedVar = discord.Embed(color=0x2ecc71)
     embedVar.add_field(name="Now Playing:", value=f"[**{payload.track.title}** by **{payload.track.author}**]"
                                                   f"({payload.track.uri})")
     embedVar.set_footer(text=f"Requested by {payload.original.requested}", icon_url=payload.original.requestedURL)
@@ -141,7 +142,13 @@ async def play(ctx: commands.Context, *, search: str, queue_next=False):  # play
     if not ctx.voice_client:  # join the voice channel if the bot is not already in one
         try:
             logging.info(msg=f"Trying to connect to {ctx.author.voice.channel} in {ctx.guild}...")
+
+            # Check if the node is connected
+            node = wavelink.Pool.get_node()
+            logging.info(f"Wavelink node status: {node.status}")
+
             vc: wavelink.Player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+            logging.info(msg=f"Successfully connected to {ctx.author.voice.channel} in {ctx.guild}.")
         except asyncio.CancelledError as e:
             logging.error(f"CancelledError when trying to connect to voice channel: {e}")
             raise
