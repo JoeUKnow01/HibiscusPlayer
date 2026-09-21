@@ -10,9 +10,12 @@ from discord.ext import commands
 from pagination import PaginationView
 
 import wavelink
+wavelink_logger = logging.getLogger("wavelink")
+wavelink_logger.setLevel(logging.WARNING)
 
-intents = discord.Intents.all()
-intents.default()
+
+intents = discord.Intents.default()
+intents.message_content = True  # Add this if you need message content
 load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -23,6 +26,8 @@ bot = commands.Bot(command_prefix='h!', intents=intents, reconnect=True)
 logging.basicConfig(level=logging.DEBUG,    format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='[%Y-%m-%d] %H:%M:%S')
 
+wavelink_logger = logging.getLogger("wavelink")
+wavelink_logger.setLevel(logging.WARNING)
 ########################################################################################################################
 
 
@@ -39,16 +44,23 @@ async def embed_sender(text_channel: discord.TextChannel, message: str):
 async def on_ready():
     logging.info("HibiscusBot is online!")
     logging.info(f"Gateway latency is {bot.latency * 1000:.2f}ms")
-    bot.loop.create_task(node_connect())
+    # Only create the task if it hasn't been created yet
+    if not hasattr(bot, 'node_connected'):
+        bot.loop.create_task(node_connect())
+        bot.node_connected = True
 
 
 @bot.event
 async def on_wavelink_node_ready(payload: wavelink.NodeReadyEventPayload):
     logging.info(f"{payload.node} is ready!")
 
+@bot.event
+async def on_wavelink_node_closed(node: wavelink.Node) -> None:
+    logging.warning(f"Lavalink node {node.identifier} is closed!")
 
 @bot.event
 async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
+    logging.info(f"{payload.track} is started!")
     embedVar = discord.Embed(color=0x2ecc71)
     embedVar.add_field(name="Now Playing:", value=f"[**{payload.track.title}** by **{payload.track.author}**]"
                                                   f"({payload.track.uri})")
@@ -100,13 +112,25 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
 async def node_connect():
     await bot.wait_until_ready()
-    node: wavelink.Node = wavelink.Node(client=bot,
-                                        identifier=os.getenv('NODE_ID'),
-                                        uri=os.getenv('NODE_URI'),
-                                        password=os.getenv('NODE_PASSWORD'))
-    # Lavalink node from https://lavalink.appujet.site/ssl
-    node._inactive_player_timeout = 180  # set the timeout limit in seconds
-    await wavelink.Pool.connect(client=bot, nodes=[node])
+    try:
+        node: wavelink.Node = wavelink.Node(client=bot,
+                                            identifier=os.getenv('NODE_ID'),
+                                            uri=os.getenv('NODE_URI'),
+                                            password=os.getenv('NODE_PASSWORD'))
+        logging.info(f"Node object created: {node}")
+        logging.info(f"Connecting to {os.getenv('NODE_URI')}")
+
+        node._inactive_player_timeout = 180 #node timeout in seconds
+        await wavelink.Pool.connect(client=bot, nodes=[node])
+
+        logging.info("Successfully connected to Lavalink node!")
+
+        # Verify the node is actually in the pool
+        pool_nodes = wavelink.Pool.nodes
+        logging.info(f"Nodes in pool: {pool_nodes}")
+
+    except Exception as e:
+        logging.error(f"Failed to connect to Lavalink node: {e}", exc_info=True)
 
 
 @bot.command(name="test", help="testing embeds")
@@ -133,7 +157,7 @@ async def testpage(ctx: commands.Context):
 # Play commands with track options (i.e. skip, pause)
 
 
-@bot.command(name="play", aliases=['p'], help="requests a song to play")
+@bot.command(name="play", aliases=['p'], help="requests a song to play" )
 async def play(ctx: commands.Context, *, search: str, queue_next=False):  # playable searches all sources
     if not ctx.author.voice:  # ensure user is connected to voice channel
         return await embed_sender(text_channel=ctx.channel,
